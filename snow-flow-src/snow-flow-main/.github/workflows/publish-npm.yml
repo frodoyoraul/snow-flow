@@ -1,0 +1,333 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g., 9.0.0)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: write
+  packages: write
+
+jobs:
+  build-and-publish:
+    name: Build All Platforms & Publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine release channel
+        id: channel
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            echo "channel=stable" >> $GITHUB_OUTPUT
+            echo "npm_tag=latest" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "🏷️ Tag push - stable release"
+          elif [[ $GITHUB_REF == refs/heads/main || $GITHUB_REF == refs/heads/production ]]; then
+            echo "channel=stable" >> $GITHUB_OUTPUT
+            echo "npm_tag=latest" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "🚀 Main/production branch - stable release"
+          else
+            BRANCH_NAME=${GITHUB_REF#refs/heads/}
+            # Sanitize branch name for npm prerelease tag (only alphanumeric and hyphens)
+            SAFE_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+            echo "channel=dev" >> $GITHUB_OUTPUT
+            echo "npm_tag=dev" >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "branch_slug=$SAFE_BRANCH" >> $GITHUB_OUTPUT
+            echo "🔧 Branch '$BRANCH_NAME' - dev release (npm tag: dev)"
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Upgrade npm (required for OIDC)
+        run: npm install -g npm@latest
+
+      - name: Configure npm for OIDC publishing
+        run: |
+          rm -f ~/.npmrc
+          rm -f .npmrc
+          rm -f /home/runner/work/_temp/.npmrc 2>/dev/null || true
+          echo "registry=https://registry.npmjs.org/" > ~/.npmrc
+          echo "//registry.npmjs.org/:_authToken=" >> ~/.npmrc
+          echo "✅ npm configured for OIDC"
+
+      - name: Debug OIDC setup
+        run: |
+          echo "=== npm version ==="
+          npm --version
+          echo "=== OIDC token available? ==="
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+            echo "✅ OIDC token request token is available"
+          else
+            echo "❌ OIDC token request token NOT available"
+          fi
+          echo "=== Release channel ==="
+          echo "Channel: ${{ steps.channel.outputs.channel }}"
+          echo "npm tag: ${{ steps.channel.outputs.npm_tag }}"
+          echo "Prerelease: ${{ steps.channel.outputs.prerelease }}"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Get version
+        id: version
+        run: |
+          BASE_VERSION=$(cat packages/opencode/package.json | grep '"version"' | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          elif [[ $GITHUB_REF == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          elif [[ "${{ steps.channel.outputs.channel }}" == "dev" ]]; then
+            echo "version=${BASE_VERSION}-dev.${{ github.run_number }}" >> $GITHUB_OUTPUT
+          else
+            # Stable release: auto-increment patch from latest published npm version
+            LATEST=$(npm view snow-flow version 2>/dev/null || echo "$BASE_VERSION")
+            MAJOR=$(echo "$LATEST" | cut -d. -f1)
+            MINOR=$(echo "$LATEST" | cut -d. -f2)
+            PATCH=$(echo "$LATEST" | cut -d. -f3)
+            NEW_PATCH=$((PATCH + 1))
+            echo "version=${MAJOR}.${MINOR}.${NEW_PATCH}" >> $GITHUB_OUTPUT
+            echo "📦 Auto-bumped: ${LATEST} → ${MAJOR}.${MINOR}.${NEW_PATCH}"
+          fi
+
+      - name: Install dependencies
+        run: |
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            if bun install; then
+              break
+            fi
+            sleep 10
+          done
+
+      - name: Build ALL platform binaries (cross-compile)
+        run: |
+          cd packages/opencode
+
+          # Update version in package.json
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" package.json
+
+          # Build ALL platforms from Linux (cross-compilation)
+          echo "Building all platforms via cross-compilation..."
+          bun run build
+        env:
+          SNOW_CODE_CHANNEL: ${{ steps.channel.outputs.channel }}
+          SNOW_CODE_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Rename output directories
+        run: |
+          cd packages/opencode/dist
+
+          # Find all built directories and rename for snow-flow
+          for dir in */; do
+            if [ -d "$dir" ]; then
+              # Replace snow-code with snow-flow in dir name
+              new_name=$(echo "$dir" | sed 's/snow-code/snow-flow/' | sed 's/opencode/snow-flow/')
+              if [ "$dir" != "$new_name" ]; then
+                echo "Renaming $dir to $new_name"
+                mv "$dir" "$new_name"
+              fi
+            fi
+          done
+
+          echo "Built platforms:"
+          ls -la
+
+      - name: Prepare package for publishing
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          cd packages/opencode
+
+          # Update package.json for release
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+
+            // Read catalog from root package.json
+            const rootPkg = JSON.parse(fs.readFileSync('../../package.json', 'utf8'));
+            const catalog = (rootPkg.workspaces && rootPkg.workspaces.catalog) || {};
+
+            // Change name and version, remove private flag and type
+            pkg.name = 'snow-flow';
+            pkg.version = '$VERSION';
+            pkg.description = 'Snow-Flow - ServiceNow Multi-Agent Development Framework powered by AI';
+            pkg.private = false;
+            delete pkg.type; // Remove 'module' type so bin scripts can use CommonJS
+
+            // Set repository for OIDC provenance verification
+            pkg.repository = {
+              type: 'git',
+              url: 'https://github.com/groeimetai/snow-flow'
+            };
+
+            // Update bin commands - all aliases for maximum compatibility
+            // This ensures 'snow-code' and 'snow-flow' work immediately after install
+            pkg.bin = {
+              'snow-flow': './bin/snow-code',
+              'snow-code': './bin/snow-code',
+              'snowcode': './bin/snow-code',
+              'snowflow': './bin/snow-code'
+            };
+
+            // Helper to resolve workspace/catalog dependencies
+            function resolveDeps(deps) {
+              if (!deps) return;
+              Object.keys(deps).forEach(key => {
+                const val = deps[key];
+                if (val.includes('workspace:')) {
+                  // Remove workspace dependencies
+                  delete deps[key];
+                } else if (val === 'catalog:' || val.startsWith('catalog:')) {
+                  // Resolve catalog: to actual version
+                  if (catalog[key]) {
+                    deps[key] = catalog[key];
+                  } else {
+                    // Remove if not in catalog
+                    console.warn('Warning: ' + key + ' not found in catalog, removing');
+                    delete deps[key];
+                  }
+                }
+              });
+            }
+
+            resolveDeps(pkg.dependencies);
+            resolveDeps(pkg.devDependencies);
+
+            // Remove optionalDependencies - platform packages can't use OIDC
+            delete pkg.optionalDependencies;
+
+            // Add postinstall script to download binary from GitHub releases
+            pkg.scripts = pkg.scripts || {};
+            pkg.scripts.postinstall = 'node scripts/postinstall.cjs';
+
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          "
+
+          echo "Updated package.json:"
+          cat package.json
+
+      - name: Create platform tarballs
+        run: |
+          cd packages/opencode/dist
+
+          for dir in snow-flow-*/; do
+            if [ -d "$dir" ]; then
+              platform_name=$(basename "$dir")
+              echo "Creating tarball for $platform_name..."
+              # Create tarball with bin/ and mcp/ directories
+              tar -czf "${platform_name}.tar.gz" -C "$dir" bin mcp
+              echo "Created ${platform_name}.tar.gz"
+            fi
+          done
+
+          ls -la *.tar.gz 2>/dev/null || echo "No tarballs created"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Snow-Flow v${{ steps.version.outputs.version }}
+          prerelease: ${{ steps.channel.outputs.prerelease == 'true' }}
+          generate_release_notes: ${{ steps.channel.outputs.channel == 'stable' }}
+          files: |
+            packages/opencode/dist/*.tar.gz
+          body: |
+            ## Installation
+
+            ```bash
+            npm install -g snow-flow@${{ steps.version.outputs.version }}
+            ```
+
+            ## Run
+
+            ```bash
+            snow-flow
+            # or
+            snow-code
+            ```
+
+            ## What's New
+
+            - 100% TypeScript (SolidJS + OpenTUI)
+            - 373+ ServiceNow MCP tools
+            - 53 bundled skills
+            - 8 auth types (ServiceNow OAuth, Enterprise, Portal, MID Server, etc.)
+            - Enterprise integrations (Jira, Azure DevOps, Confluence, GitHub, GitLab)
+
+            ## Platform Binaries
+
+            Binaries are automatically downloaded during npm install.
+            Manual download available above if needed.
+
+            ### Supported Platforms
+            - Linux x64 / arm64
+            - macOS arm64 (Apple Silicon) / x64 (Intel)
+            - Windows x64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore bin launcher (prevent shipping CI platform binary)
+        run: |
+          cd packages/opencode
+          git checkout -- bin/snow-code
+          echo "Restored launcher script:"
+          wc -c bin/snow-code
+
+      - name: Publish main package to npm (OIDC)
+        run: |
+          cd packages/opencode
+          NPM_TAG="${{ steps.channel.outputs.npm_tag }}"
+          echo "Publishing snow-flow with tag: $NPM_TAG"
+
+          if [ "$NPM_TAG" = "latest" ]; then
+            npm publish --access public --provenance
+          else
+            npm publish --access public --tag "$NPM_TAG" --provenance
+          fi
+
+      - name: Update version in repo
+        if: steps.channel.outputs.channel == 'stable'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git config user.email "bot@snow-flow.dev"
+          git config user.name "snow-flow-bot"
+          git checkout ${{ github.ref_name }}
+          # Update version in the source package.json
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" packages/opencode/package.json
+          git add packages/opencode/package.json
+          git diff --cached --quiet || git commit -m "chore: bump version to ${VERSION} [skip ci]"
+          git push origin ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Platform binaries are distributed via GitHub releases
+      # Users can download from: https://github.com/groeimetai/snow-flow/releases

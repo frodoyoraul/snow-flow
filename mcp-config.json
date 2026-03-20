@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "snow-flow": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/usr/lib/node_modules/snow-flow/mcp/servicenow-unified.js"],
+      "env": {
+        "SNOW_FLOW_URL": "http://127.0.0.1:3000",
+        "SNOW_FLOW_USERNAME": "admin",
+        "SNOW_FLOW_PASSWORD": "Qwer123443"
+      }
+    }
+  }
+}

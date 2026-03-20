@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" fill="#131010"/>
+  <defs>
+    <linearGradient id="mountain" x1="256" y1="128" x2="256" y2="352" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#00D9FF"/>
+    </linearGradient>
+  </defs>
+  <path d="M96 368 L192 144 L256 240 L320 144 L416 368 Z"
+        fill="url(#mountain)"
+        stroke="#00D9FF"
+        stroke-width="6"
+        stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,50 @@
+🚨 Iniciando monitoreo de RITM 7aeaeb4c477ffa14a3978f59e16d4374
+Presiona Ctrl+C para detener
+
+
+🕐 20:09:33 - Revisando...
+  ✅ No hay approvals pendientes
+  🔄 Evaluando 6 tareas para cerrar...
+  + Exception Group Traceback (most recent call last):
+  |   File "/home/openclaw/.openclaw/workspace/auto_approve_and_close.py", line 120, in <module>
+  |     asyncio.run(monitor_ritm(ritm_id))
+  |   File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+  |     return runner.run(main)
+  |            ^^^^^^^^^^^^^^^^
+  |   File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+  |     return self._loop.run_until_complete(task)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "/usr/lib/python3.12/asyncio/base_events.py", line 687, in run_until_complete
+  |     return future.result()
+  |            ^^^^^^^^^^^^^^^
+  |   File "/home/openclaw/.openclaw/workspace/auto_approve_and_close.py", line 91, in monitor_ritm
+  |     async with sse_client(MCP_URL, auth=AUTH) as streams:
+  |   File "/usr/lib/python3.12/contextlib.py", line 231, in __aexit__
+  |     await self.gen.athrow(value)
+  |   File "/usr/local/lib/python3.12/dist-packages/mcp/client/sse.py", line 63, in sse_client
+  |     async with anyio.create_task_group() as tg:
+  |   File "/usr/local/lib/python3.12/dist-packages/anyio/_backends/_asyncio.py", line 783, in __aexit__
+  |     raise BaseExceptionGroup(
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Exception Group Traceback (most recent call last):
+    |   File "/usr/local/lib/python3.12/dist-packages/mcp/client/sse.py", line 159, in sse_client
+    |     yield read_stream, write_stream
+    |   File "/home/openclaw/.openclaw/workspace/auto_approve_and_close.py", line 92, in monitor_ritm
+    |     async with ClientSession(*streams) as session:
+    |   File "/usr/local/lib/python3.12/dist-packages/mcp/shared/session.py", line 238, in __aexit__
+    |     return await self._task_group.__aexit__(exc_type, exc_val, exc_tb)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/usr/local/lib/python3.12/dist-packages/anyio/_backends/_asyncio.py", line 783, in __aexit__
+    |     raise BaseExceptionGroup(
+    | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | Traceback (most recent call last):
+      |   File "/home/openclaw/.openclaw/workspace/auto_approve_and_close.py", line 106, in monitor_ritm
+      |     closed = await close_completed_tasks(session)
+      |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      |   File "/home/openclaw/.openclaw/workspace/auto_approve_and_close.py", line 69, in close_completed_tasks
+      |     sys_id = task["sys_id"]["value"]
+      |              ~~~~~~~~~~~~~~^^^^^^^^^
+      | TypeError: string indices must be integers, not 'str'
+      +------------------------------------
