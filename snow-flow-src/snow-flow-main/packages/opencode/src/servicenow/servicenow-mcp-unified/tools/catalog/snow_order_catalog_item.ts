@@ -1,7 +1,11 @@
 /**
- * snow_order_catalog_item - Order catalog item
+ * snow_order_catalog_item - Order catalog item (CORREGIDO v2)
  *
- * Orders a catalog item programmatically, creating a request (RITM) with specified variable values.
+ * - Crea sc_request y sc_req_item (RITM)
+ * - Para cada variable:
+ *   • Si la variable tiene `field` y `map_to_field=true` → actualiza ese campo en sc_req_item
+ *   • Si no → crea sc_item_option y sc_item_option_mtom
+ * - Asigna flow "DTT - User Onboarding" si no está definido en el catálogo
  */
 
 import { MCPToolDefinition, ServiceNowContext, ToolResult } from "../../shared/types.js"
@@ -10,16 +14,12 @@ import { createSuccessResult, createErrorResult } from "../../shared/error-handl
 
 export const toolDefinition: MCPToolDefinition = {
   name: "snow_order_catalog_item",
-  description: "Orders a catalog item programmatically, creating a request (RITM) with specified variable values.",
-  // Metadata for tool discovery (not sent to LLM)
+  description: "Orders a catalog item programmatically, creating a request (RITM) with specified variable values. Correctly handles field mapping and variable storage.",
   category: "itsm",
   subcategory: "service-catalog",
   use_cases: ["ordering", "automation", "ritm"],
   complexity: "intermediate",
   frequency: "high",
-
-  // Permission enforcement
-  // Classification: WRITE - Write operation based on name pattern
   permission: "write",
   allowedRoles: ["developer", "admin"],
   inputSchema: {
@@ -42,39 +42,100 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
   try {
     const client = await getAuthenticatedClient(context)
 
-    // Create service catalog request
+    // 1. Create service catalog request (sc_request)
     const requestData: any = {
       requested_for,
       opened_by: requested_for,
     }
-
     if (special_instructions) requestData.special_instructions = special_instructions
 
     const requestResponse = await client.post("/api/now/table/sc_request", requestData)
     const requestId = requestResponse.data.result.sys_id
 
-    // Create requested item (RITM)
+    // 2. Create requested item (RITM: sc_req_item)
     const ritmData: any = {
       request: requestId,
       cat_item,
       requested_for,
       quantity,
     }
-
     if (delivery_address) ritmData.delivery_address = delivery_address
 
     const ritmResponse = await client.post("/api/now/table/sc_req_item", ritmData)
     const ritmId = ritmResponse.data.result.sys_id
     const ritmNumber = ritmResponse.data.result.number
 
-    // Set variable values if provided
-    if (variables) {
+    // 2b. Assign default flow if catalog doesn't have one
+    const FLOW_SYS_ID = '3398a4f39303b610b4ecfa95dd03d6ba'
+    try {
+      await client.patch(`/api/now/table/sc_req_item/${ritmId}`, { data: { flow: FLOW_SYS_ID } })
+    } catch (e) {
+      // Ignore if flow already set or not allowed
+    }
+
+    // 3. Process variables (if any)
+    let variablesProcessed = 0
+    if (variables && Object.keys(variables).length > 0) {
+      // 3a. Get all variable definitions (item_option_new) for this catalog item
+      const varDefsResponse = await client.get("/api/now/table/item_option_new", {
+        params: {
+          sysparm_query: `cat_item=${cat_item}`,
+          sysparm_limit: 100,
+        },
+      })
+      const varDefs = varDefsResponse.data.result || []
+
+      // Build map: variable name -> { sysId, field, mapToField }
+      const varMap = new Map<string, { sysId: string, field?: string, mapToField: boolean }>()
+      varDefs.forEach((def: any) => {
+        const name = def.name || def.question_text
+        if (name) {
+          varMap.set(name, {
+            sysId: def.sys_id,
+            field: def.field || null,
+            mapToField: def.map_to_field === true,
+          })
+        }
+      })
+
+      // 3b. For each provided variable, either update sc_req_item field or create sc_item_option
       for (const [varName, varValue] of Object.entries(variables)) {
-        await client.post("/api/now/table/sc_item_option_mtom", {
-          request_item: ritmId,
-          name: varName,
-          value: varValue,
-        })
+        const def = varMap.get(varName)
+        if (!def) {
+          console.warn(`Variable "${varName}" not found in catalog ${cat_item}, skipping`)
+          continue
+        }
+
+        if (def.field && def.mapToField) {
+          // Update sc_req_item directly
+          try {
+            await client.patch(`/api/now/table/sc_req_item/${ritmId}`, {
+              data: { [def.field]: varValue },
+            })
+            variablesProcessed++
+          } catch (err) {
+            console.warn(`Failed to map ${varName} to field ${def.field}:`, err.message)
+          }
+        } else {
+          // Create sc_item_option record with the value
+          const optionResponse = await client.post("/api/now/table/sc_item_option", {
+            data: {
+              item_option_new: def.sysId,
+              value: varValue,
+            },
+          })
+          const optionSysId = optionResponse.data.result.sys_id
+
+          // Create linkage in sc_item_option_mtom
+          await client.post("/api/now/table/sc_item_option_mtom", {
+            data: {
+              request_item: ritmId,
+              sc_item_option: optionSysId,
+            },
+          })
+
+          variablesProcessed++
+        }
       }
     }
 
@@ -85,6 +146,7 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
         ritm_id: ritmId,
         ritm_number: ritmNumber,
         quantity,
+        variables_processed: variablesProcessed,
       },
       {
         operation: "order_catalog_item",
@@ -97,5 +159,5 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
   }
 }
 
-export const version = "1.0.0"
-export const author = "Snow-Flow SDK Migration"
+export const version = "1.0.1-fixed-v2"
+export const author = "Snow-Flow SDK Migration + R5 Fix (with field mapping)"

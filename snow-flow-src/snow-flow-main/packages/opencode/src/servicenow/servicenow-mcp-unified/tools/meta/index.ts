@@ -266,10 +266,11 @@ The 'args' parameter should match the tool's input schema from tool_search resul
 }
 
 export async function tool_execute_exec(
-  args: { tool: string; args: Record<string, any> },
+  args: { tool?: string; name?: string; args: Record<string, any> },
   context: ServiceNowContext,
 ): Promise<any> {
-  const toolName = args.tool
+  console.log("[DEBUG] tool_execute_exec received:", JSON.stringify(args, null, 2))
+  const toolName = args.tool || args.name
   const toolArgs = args.args || {}
   const sessionId = context.sessionId
 
