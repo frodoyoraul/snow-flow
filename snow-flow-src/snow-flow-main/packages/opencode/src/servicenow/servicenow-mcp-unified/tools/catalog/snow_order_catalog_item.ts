@@ -65,14 +65,6 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
     const ritmId = ritmResponse.data.result.sys_id
     const ritmNumber = ritmResponse.data.result.number
 
-    // 2b. Assign default flow if catalog doesn't have one
-    const FLOW_SYS_ID = '3398a4f39303b610b4ecfa95dd03d6ba'
-    try {
-      await client.patch(`/api/now/table/sc_req_item/${ritmId}`, { data: { flow: FLOW_SYS_ID } })
-    } catch (e) {
-      // Ignore if flow already set or not allowed
-    }
-
     // 3. Process variables (if any)
     let variablesProcessed = 0
     if (variables && Object.keys(variables).length > 0) {
@@ -110,7 +102,7 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
           // Update sc_req_item directly
           try {
             await client.patch(`/api/now/table/sc_req_item/${ritmId}`, {
-              data: { [def.field]: varValue },
+              [def.field]: varValue,
             })
             variablesProcessed++
           } catch (err) {
@@ -119,19 +111,15 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
         } else {
           // Create sc_item_option record with the value
           const optionResponse = await client.post("/api/now/table/sc_item_option", {
-            data: {
-              item_option_new: def.sysId,
-              value: varValue,
-            },
+            item_option_new: def.sysId,
+            value: varValue,
           })
           const optionSysId = optionResponse.data.result.sys_id
 
           // Create linkage in sc_item_option_mtom
           await client.post("/api/now/table/sc_item_option_mtom", {
-            data: {
-              request_item: ritmId,
-              sc_item_option: optionSysId,
-            },
+            request_item: ritmId,
+            sc_item_option: optionSysId,
           })
 
           variablesProcessed++
