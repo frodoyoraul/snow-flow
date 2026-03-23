@@ -107,10 +107,10 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
     )
 
     // 7. Dos updates en sc_req_item para que ServiceNow asocie el flow context.
-    //    Se usa work_notes (campo journal) para garantizar que los Business Rules
-    //    disparen — un body vacío {} es un no-op y ServiceNow lo ignora.
-    await client.patch(`/api/now/table/sc_req_item/${ritmId}`, { work_notes: 'Variables initialized' })
-    await client.patch(`/api/now/table/sc_req_item/${ritmId}`, { work_notes: 'Flow context ready' })
+    //    sys_mod_count es ignorado como valor (ServiceNow auto-incrementa),
+    //    pero el PATCH dispara los Business Rules necesarios sin dejar rastro visible.
+    await client.patch(`/api/now/table/sc_req_item/${ritmId}`, { sys_mod_count: '1' })
+    await client.patch(`/api/now/table/sc_req_item/${ritmId}`, { sys_mod_count: '1' })
 
     return createSuccessResult(
       {
