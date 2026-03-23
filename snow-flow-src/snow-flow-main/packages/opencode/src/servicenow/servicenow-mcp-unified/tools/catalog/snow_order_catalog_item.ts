@@ -1,11 +1,13 @@
 /**
  * snow_order_catalog_item - Order catalog item
  *
- * Estrategia:
- *   1. Obtener definiciones de variables del catálogo
- *   2. Crear sc_request + sc_req_item
- *   3. Crear TODAS las variables en paralelo (Promise.all) para minimizar
- *      la ventana entre la creación del RITM y el arranque del flow
+ * Orden de operaciones para evitar race condition con el flow:
+ *   1. Obtener definiciones de variables
+ *   2. Crear sc_request
+ *   3. Pre-crear todos los sc_item_option (no necesitan RITM aún)
+ *   4. Pequeño delay para asegurar que estén committed en DB
+ *   5. Crear sc_req_item (RITM) — el flow arranca AQUÍ
+ *   6. Crear sc_item_option_mtom en paralelo inmediatamente
  */
 
 import { MCPToolDefinition, ServiceNowContext, ToolResult } from "../../shared/types.js"
@@ -34,13 +36,15 @@ export const toolDefinition: MCPToolDefinition = {
   },
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
 export async function execute(args: any, context: ServiceNowContext): Promise<ToolResult> {
   const { cat_item, requested_for, variables = {}, quantity = 1 } = args
 
   try {
     const client = await getAuthenticatedClient(context)
 
-    // 1. Obtener definiciones de variables ANTES de crear el RITM
+    // 1. Obtener definiciones de variables
     const varDefsResponse = await client.get("/api/now/table/item_option_new", {
       params: {
         sysparm_query: `cat_item=${cat_item}`,
@@ -61,7 +65,28 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
     })
     const requestId = requestResponse.data.result.sys_id
 
-    // 3. Crear sc_req_item (RITM) — el flow arranca aquí
+    // 3. Pre-crear sc_item_option records en paralelo (sin RITM todavía)
+    const varEntries = Object.entries(variables).filter(([name]) => varMap.has(name))
+    const skipped = Object.keys(variables).filter(name => !varMap.has(name))
+    if (skipped.length > 0) {
+      console.warn(`Variables no encontradas en catálogo: ${skipped.join(', ')}`)
+    }
+
+    const optionSysIds: Array<{ optionSysId: string }> = await Promise.all(
+      varEntries.map(async ([varName, varValue]) => {
+        const defSysId = varMap.get(varName)!
+        const optResp = await client.post("/api/now/table/sc_item_option", {
+          item_option_new: defSysId,
+          value: varValue,
+        })
+        return { optionSysId: optResp.data.result.sys_id }
+      })
+    )
+
+    // 4. Esperar un momento para que los sc_item_option estén committed en DB
+    await sleep(1000)
+
+    // 5. Crear sc_req_item (RITM) — el flow arranca aquí
     const ritmResponse = await client.post("/api/now/table/sc_req_item", {
       request: requestId,
       cat_item,
@@ -71,33 +96,15 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
     const ritmId = ritmResponse.data.result.sys_id
     const ritmNumber = ritmResponse.data.result.number
 
-    // 4. Crear TODAS las variables en paralelo para minimizar la ventana temporal
-    let variablesProcessed = 0
-    if (Object.keys(variables).length > 0) {
-      const varEntries = Object.entries(variables).filter(([name]) => varMap.has(name))
-      const skipped = Object.keys(variables).filter(name => !varMap.has(name))
-      if (skipped.length > 0) {
-        console.warn(`Variables no encontradas en catálogo: ${skipped.join(', ')}`)
-      }
-
-      await Promise.all(
-        varEntries.map(async ([varName, varValue]) => {
-          const defSysId = varMap.get(varName)!
-          // Crear sc_item_option
-          const optResp = await client.post("/api/now/table/sc_item_option", {
-            item_option_new: defSysId,
-            value: varValue,
-          })
-          const optionSysId = optResp.data.result.sys_id
-          // Vincular al RITM
-          await client.post("/api/now/table/sc_item_option_mtom", {
-            request_item: ritmId,
-            sc_item_option: optionSysId,
-          })
+    // 6. Crear sc_item_option_mtom en paralelo inmediatamente
+    await Promise.all(
+      optionSysIds.map(({ optionSysId }) =>
+        client.post("/api/now/table/sc_item_option_mtom", {
+          request_item: ritmId,
+          sc_item_option: optionSysId,
         })
       )
-      variablesProcessed = varEntries.length
-    }
+    )
 
     return createSuccessResult(
       {
@@ -106,7 +113,7 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
         ritm_id: ritmId,
         ritm_number: ritmNumber,
         quantity,
-        variables_processed: variablesProcessed,
+        variables_processed: varEntries.length,
       },
       {
         operation: "order_catalog_item",
@@ -119,5 +126,5 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
   }
 }
 
-export const version = "3.0.0-parallel-vars"
-export const author = "R5 - parallel variable creation"
+export const version = "4.0.0-pre-create-vars"
+export const author = "R5 - pre-create variables before RITM"
