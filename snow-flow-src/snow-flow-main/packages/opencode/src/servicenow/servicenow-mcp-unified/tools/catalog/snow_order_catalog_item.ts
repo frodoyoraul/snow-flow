@@ -106,6 +106,10 @@ export async function execute(args: any, context: ServiceNowContext): Promise<To
       )
     )
 
+    // 7. Touch sc_req_item para que ServiceNow asocie el flow context
+    //    (sin este update, el flow context no se vincula al RITM)
+    await client.patch(`/api/now/table/sc_req_item/${ritmId}`, {})
+
     return createSuccessResult(
       {
         ordered: true,
