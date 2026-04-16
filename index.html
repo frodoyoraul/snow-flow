@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Buscador de Rostros en Fotos</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header>
+    <h1>Buscador de Rostros en Fotos</h1>
+    <p class="subtitle">Encuentra a una persona en tu coleccion de fotos. <span class="privacy-badge">Todos los datos se procesan localmente en tu navegador.</span></p>
+  </header>
+
+  <main>
+    <!-- Zona de subida -->
+    <section id="upload-section">
+      <div class="upload-zone" id="reference-zone">
+        <input type="file" id="reference-input" multiple accept="image/*" hidden>
+        <div class="upload-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <h3>Fotos de Referencia</h3>
+        <p>Arrastra aqui fotos de la persona que buscas</p>
+        <p class="upload-hint">o haz clic para seleccionar</p>
+        <div id="reference-previews" class="reference-previews"></div>
+      </div>
+
+      <div class="upload-zone" id="search-zone">
+        <input type="file" id="search-input" multiple accept="image/*" hidden>
+        <div class="upload-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+        </div>
+        <h3>Fotos para Buscar</h3>
+        <p>Arrastra aqui la coleccion de fotos donde buscar</p>
+        <p class="upload-hint">o haz clic para seleccionar</p>
+        <div id="search-count" class="search-count"></div>
+      </div>
+    </section>
+
+    <!-- Indicador de modelos -->
+    <div id="model-status" class="model-status">
+      <span class="status-dot loading"></span>
+      <span id="model-status-text">Cargando modelos de IA...</span>
+    </div>
+
+    <!-- Boton de busqueda -->
+    <div class="search-action">
+      <button id="search-btn" disabled>Buscar Coincidencias</button>
+    </div>
+
+    <!-- Seccion de progreso -->
+    <section id="progress-section" class="hidden">
+      <div class="progress-container">
+        <p id="progress-text" class="progress-text">Procesando...</p>
+        <progress id="progress-bar" max="100" value="0"></progress>
+        <p id="progress-detail" class="progress-detail"></p>
+      </div>
+    </section>
+
+    <!-- Seccion de resultados -->
+    <section id="results-section" class="hidden">
+      <div class="results-controls">
+        <span id="match-count" class="match-count"></span>
+        <div class="threshold-control">
+          <label for="threshold-slider">Umbral de similitud:</label>
+          <span class="threshold-label">Mas estricto</span>
+          <input type="range" id="threshold-slider" min="0.3" max="0.9" step="0.05" value="0.6">
+          <span class="threshold-label">Mas flexible</span>
+          <span id="threshold-value" class="threshold-value">0.60</span>
+        </div>
+        <button id="download-btn">Descargar Coincidencias</button>
+      </div>
+      <div id="gallery" class="gallery"></div>
+      <div id="no-results" class="no-results hidden">
+        <p>No se encontraron coincidencias con el umbral actual. Intenta mover el slider hacia la derecha para ser mas flexible.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Buscador de Rostros &mdash; Todos los datos se procesan localmente. Tus fotos nunca salen de tu navegador.</p>
+  </footer>
+
+  <!-- CDN Dependencies -->
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+
+  <!-- App modules -->
+  <script src="js/faceDetection.js"></script>
+  <script src="js/gallery.js"></script>
+  <script src="js/zipExport.js"></script>
+  <script src="js/app.js"></script>
+
+</body>
+</html>
